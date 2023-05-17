@@ -17,6 +17,8 @@ const Vertex = struct {
     y: f32,
 };
 
+const GRID_CELLS_Y: u32 = 24;
+
 const DemoState = struct {
     const Self = @This();
 
@@ -33,19 +35,6 @@ const DemoState = struct {
 
     fn init(allocator: std.mem.Allocator, window: *zglfw.Window) !DemoState {
         const gctx = try zgpu.GraphicsContext.create(allocator, window);
-
-        // zig fmt: off
-        const vertices = [_]f32{
-        //    X,    Y,
-            -0.8, -0.8, // Triangle 1 (Blue)
-             0.8, -0.8,
-             0.8,  0.8,
-
-            -0.8, -0.8, // Triangle 2 (Red)
-             0.8,  0.8,
-            -0.8,  0.8, 
-        };
-        // zig fmt: on
 
         // Create a bind group layout needed for our render pipeline.
         const bind_group_layout = gctx.createBindGroupLayout(&.{
@@ -115,22 +104,39 @@ const DemoState = struct {
                 .binding = 0,
                 .buffer_handle = gctx.uniforms.buffer,
                 .offset = 0,
-                .size = @sizeOf(f32) * 2,
+                .size = @sizeOf(u32) * 2,
             },
         });
+
+        const grid_cells_x = gctx.swapchain_descriptor.width * GRID_CELLS_Y / gctx.swapchain_descriptor.height;
+        const uniform_array = [_]u32{ grid_cells_x, GRID_CELLS_Y };
+        const mem = gctx.uniformsAllocate(u32, 2);
+        @memcpy(mem.slice[0..2], uniform_array[0..]);
+
+        // zig fmt: off
+        const vertices = [_]f32{
+        //    X,    Y,
+            -0.8, -0.8, // Triangle 1 (Blue)
+             0.8, -0.8,
+             0.8,  0.8,
+
+            -0.8, -0.8, // Triangle 2 (Red)
+             0.8,  0.8,
+            -0.8,  0.8, 
+        };
+        // zig fmt: on
 
         const vertex_buffer_handle = gctx.createBuffer(.{
             .label = "Cell vertices",
             .size = vertices.len * @sizeOf(f32),
             .usage = .{ .vertex = true, .copy_dst = true },
         });
-
         gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer_handle).?, 0, f32, vertices[0..]);
 
         const depth = createDepthTexture(gctx);
 
         // Create a bind group layout needed for our render pipeline.
-        return DemoState{
+        return Self{
             .gctx = gctx,
             .vertex_buffer_handle = vertex_buffer_handle,
             .pipeline = pipeline,
@@ -201,13 +207,18 @@ const DemoState = struct {
                     pass.end();
                     pass.release();
                 }
+                const grid_cells_x = gctx.swapchain_descriptor.width * GRID_CELLS_Y / gctx.swapchain_descriptor.height;
+                const uniform_array = [_]u32{ grid_cells_x, GRID_CELLS_Y };
+                const mem = gctx.uniformsAllocate(u32, 2);
+                @memcpy(mem.slice[0..2], uniform_array[0..]);
+
                 // pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
                 pass.setPipeline(pipeline);
                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
 
                 pass.setBindGroup(0, bind_group, &.{0});
 
-                pass.draw(6, 2, 0, 0);
+                pass.draw(6, grid_cells_x * GRID_CELLS_Y, 0, 0);
             }
             {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{

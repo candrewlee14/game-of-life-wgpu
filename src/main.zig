@@ -9,8 +9,7 @@ const zm = @import("zmath");
 const content_dir = @import("build_options").content_dir;
 const window_title = "Conway's Game of Life (Native WebGPU)";
 
-const wgsl_vs = @embedFile("shaders/vertex.wgsl");
-const wgsl_fs = @embedFile("shaders/fragment.wgsl");
+const cell_wgsl = @embedFile("shaders/cell.wgsl");
 
 const Vertex = struct {
     x: f32,
@@ -38,7 +37,7 @@ const DemoState = struct {
 
         // Create a bind group layout needed for our render pipeline.
         const bind_group_layout = gctx.createBindGroupLayout(&.{
-            zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
+            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true, .compute = true }, .uniform, true, 0),
         });
         defer gctx.releaseResource(bind_group_layout);
 
@@ -46,11 +45,8 @@ const DemoState = struct {
         defer gctx.releaseResource(pipeline_layout);
 
         const pipeline = pipline: {
-            const vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vertex");
-            defer vs_module.release();
-
-            const fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fragment");
-            defer fs_module.release();
+            const cell_module = zgpu.createWgslShaderModule(gctx.device, cell_wgsl, "cell");
+            defer cell_module.release();
 
             const color_targets = [_]wgpu.ColorTargetState{.{
                 .format = zgpu.GraphicsContext.swapchain_format,
@@ -72,13 +68,13 @@ const DemoState = struct {
             const pipeline_descriptor = wgpu.RenderPipelineDescriptor{ 
                 .label = "Cell pipeline", 
                 .vertex = wgpu.VertexState{
-                    .module = vs_module,
+                    .module = cell_module,
                     .entry_point = "vertexMain",
                     .buffer_count = vertex_buf_layouts.len,
                     .buffers = &vertex_buf_layouts,
                 }, 
                 .fragment = &wgpu.FragmentState{
-                    .module = fs_module,
+                    .module = cell_module,
                     .entry_point = "fragmentMain",
                     .target_count = color_targets.len,
                     .targets = &color_targets,

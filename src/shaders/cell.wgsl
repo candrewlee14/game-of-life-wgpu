@@ -9,14 +9,17 @@ struct VertexOutput {
 }
 
 @group(0) @binding(0) var<uniform> grid: vec2<u32>;
+@group(0) @binding(1) var<storage> cell_state: array<u32>;
 
 @vertex
 fn vertexMain(input: VertexInput) -> VertexOutput {
   let i = f32(input.instance);
   let grid_f = vec2<f32>(grid);
   let cell = vec2<f32>(i % grid_f.x, floor(i / grid_f.x));
+  let state = f32(cell_state[input.instance]);
+
   let cell_offset = cell / grid_f * 2;
-  let grid_pos = (input.pos + 1) / grid_f - 1 + cell_offset;
+  let grid_pos = (state*input.pos + 1) / grid_f - 1 + cell_offset;
 
   var output: VertexOutput;
   output.pos = vec4(grid_pos, 0, 1);

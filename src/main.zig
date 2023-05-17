@@ -27,6 +27,9 @@ const DemoState = struct {
     bind_group: zgpu.BindGroupHandle,
 
     vertex_buffer_handle: zgpu.BufferHandle,
+    cell_storage_handle: zgpu.BufferHandle,
+
+    cell_state_array: std.ArrayList(u32),
     // index_buffer: zgpu.BufferHandle,
 
     depth_texture: zgpu.TextureHandle,
@@ -37,7 +40,8 @@ const DemoState = struct {
 
         // Create a bind group layout needed for our render pipeline.
         const bind_group_layout = gctx.createBindGroupLayout(&.{
-            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true, .compute = true }, .uniform, true, 0),
+            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true, .compute = true }, .uniform, false, @sizeOf(u32) * 2),
+            zgpu.bufferEntry(1, .{ .vertex = true, .fragment = true, .compute = true }, .read_only_storage, true, 0),
         });
         defer gctx.releaseResource(bind_group_layout);
 
@@ -95,15 +99,6 @@ const DemoState = struct {
             break :pipline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
         };
 
-        const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{
-                .binding = 0,
-                .buffer_handle = gctx.uniforms.buffer,
-                .offset = 0,
-                .size = @sizeOf(u32) * 2,
-            },
-        });
-
         const grid_cells_x = gctx.swapchain_descriptor.width * GRID_CELLS_Y / gctx.swapchain_descriptor.height;
         const uniform_array = [_]u32{ grid_cells_x, GRID_CELLS_Y };
         const mem = gctx.uniformsAllocate(u32, 2);
@@ -129,12 +124,45 @@ const DemoState = struct {
         });
         gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer_handle).?, 0, f32, vertices[0..]);
 
+        const n = grid_cells_x * GRID_CELLS_Y;
+        var cell_state_array = try std.ArrayList(u32).initCapacity(allocator, n);
+        cell_state_array.appendNTimesAssumeCapacity(0, n);
+        const cell_storage_handle = gctx.createBuffer(.{
+            .label = "Cell State Storage",
+            .size = cell_state_array.items.len * @sizeOf(u32),
+            .usage = .{ .storage = true, .copy_dst = true },
+        });
+        {
+            var i: usize = 0;
+            while (i < cell_state_array.items.len) : (i += 3) {
+                cell_state_array.items[i] = 1;
+            }
+        }
+        gctx.queue.writeBuffer(gctx.lookupResource(cell_storage_handle).?, 0, u32, cell_state_array.items);
+
         const depth = createDepthTexture(gctx);
 
         // Create a bind group layout needed for our render pipeline.
+        // zig fmt: off
+        const bind_group = gctx.createBindGroup(bind_group_layout, 
+            &[_]zgpu.BindGroupEntryInfo{ .{
+                .binding = 0,
+                .buffer_handle = gctx.uniforms.buffer,
+                .size = @sizeOf(u32) * 2,
+            }, 
+            .{
+                .binding = 1,
+                .buffer_handle = cell_storage_handle,
+                .size = @sizeOf(u32) * cell_state_array.items.len,
+            },
+        });
+        // zig fmt: on
+
         return Self{
             .gctx = gctx,
             .vertex_buffer_handle = vertex_buffer_handle,
+            .cell_storage_handle = cell_storage_handle,
+            .cell_state_array = cell_state_array,
             .pipeline = pipeline,
             .bind_group = bind_group,
             .depth_texture = depth.texture,
@@ -143,6 +171,7 @@ const DemoState = struct {
     }
 
     fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        self.cell_state_array.deinit();
         self.gctx.destroy(allocator);
         self.* = undefined;
     }

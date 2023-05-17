@@ -9,8 +9,8 @@ const zm = @import("zmath");
 const content_dir = @import("build_options").content_dir;
 const window_title = "Conway's Game of Life (Native WebGPU)";
 
-const wgsl_vs = @embedFile("../shaders/vs.wgsl");
-const wgsl_fs = @embedFile("../shaders/fs.wgsl");
+const wgsl_vs = @embedFile("shaders/vertex.wgsl");
+const wgsl_fs = @embedFile("shaders/fragment.wgsl");
 
 const Vertex = struct {
     x: f32,
@@ -22,22 +22,121 @@ const DemoState = struct {
 
     gctx: *zgpu.GraphicsContext,
 
-    // pipeline: zgpu.RenderPipelineHandle,
-    // bind_group: zgpu.BindGroupHandle,
+    pipeline: zgpu.RenderPipelineHandle,
+    bind_group: zgpu.BindGroupHandle,
 
-    // vertex_buffer: zgpu.BufferHandle,
+    vertex_buffer_handle: zgpu.BufferHandle,
     // index_buffer: zgpu.BufferHandle,
 
-    // depth_texture: zgpu.TextureHandle,
-    // depth_texture_view: zgpu.TextureViewHandle,
+    depth_texture: zgpu.TextureHandle,
+    depth_texture_view: zgpu.TextureViewHandle,
 
     fn init(allocator: std.mem.Allocator, window: *zglfw.Window) !DemoState {
         const gctx = try zgpu.GraphicsContext.create(allocator, window);
+
+        // zig fmt: off
+        const vertices = [_]f32{
+        //    X,    Y,
+            -0.8, -0.8, // Triangle 1 (Blue)
+             0.8, -0.8,
+             0.8,  0.8,
+
+            -0.8, -0.8, // Triangle 2 (Red)
+             0.8,  0.8,
+            -0.8,  0.8, 
+        };
+        // zig fmt: on
+
+        // Create a bind group layout needed for our render pipeline.
+        const bind_group_layout = gctx.createBindGroupLayout(&.{
+            zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
+        });
+        defer gctx.releaseResource(bind_group_layout);
+
+        const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout});
+        defer gctx.releaseResource(pipeline_layout);
+
+        const pipeline = pipline: {
+            const vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vertex");
+            defer vs_module.release();
+
+            const fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fragment");
+            defer fs_module.release();
+
+            const color_targets = [_]wgpu.ColorTargetState{.{
+                .format = zgpu.GraphicsContext.swapchain_format,
+            }};
+
+            const vertex_attributes = [_]wgpu.VertexAttribute{.{
+                .format = .float32x2,
+                .offset = 0,
+                .shader_location = 0,
+            }};
+
+            const vertex_buf_layouts = [_]wgpu.VertexBufferLayout{.{
+                .array_stride = 8,
+                .attribute_count = vertex_attributes.len,
+                .attributes = &vertex_attributes,
+            }};
+
+            // zig fmt: off
+            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{ 
+                .label = "Cell pipeline", 
+                .vertex = wgpu.VertexState{
+                    .module = vs_module,
+                    .entry_point = "vertexMain",
+                    .buffer_count = vertex_buf_layouts.len,
+                    .buffers = &vertex_buf_layouts,
+                }, 
+                .fragment = &wgpu.FragmentState{
+                    .module = fs_module,
+                    .entry_point = "fragmentMain",
+                    .target_count = color_targets.len,
+                    .targets = &color_targets,
+                },
+                .primitive = wgpu.PrimitiveState{
+                    .front_face = .ccw,
+                    .cull_mode = .none,
+                    .topology = .triangle_list,
+                },
+                .depth_stencil = &wgpu.DepthStencilState{
+                    .format = .depth32_float,
+                    .depth_write_enabled = true,
+                    .depth_compare = .less,
+                },
+            };
+            // zig fmt: on
+
+            break :pipline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
+        };
+
+        const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{
+                .binding = 0,
+                .buffer_handle = gctx.uniforms.buffer,
+                .offset = 0,
+                .size = @sizeOf(f32) * 2,
+            },
+        });
+
+        const vertex_buffer_handle = gctx.createBuffer(.{
+            .label = "Cell vertices",
+            .size = vertices.len * @sizeOf(f32),
+            .usage = .{ .vertex = true, .copy_dst = true },
+        });
+
+        gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer_handle).?, 0, f32, vertices[0..]);
+
+        const depth = createDepthTexture(gctx);
+
         // Create a bind group layout needed for our render pipeline.
         return DemoState{
             .gctx = gctx,
-            // .pipeline = pipeline,
-            // .bind_group = bind_group,
+            .vertex_buffer_handle = vertex_buffer_handle,
+            .pipeline = pipeline,
+            .bind_group = bind_group,
+            .depth_texture = depth.texture,
+            .depth_texture_view = depth.view,
         };
     }
 
@@ -63,40 +162,52 @@ const DemoState = struct {
         defer back_buffer_view.release();
 
         const commands = commands: {
-            const encoder = demo.gctx.device.createCommandEncoder(null);
+            const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
 
-            {
-                // const vb_info = gctx.lookupResourceInfo(demo.vertex_buffer) orelse break :pass;
+            pass: {
+                const vb_info = gctx.lookupResourceInfo(demo.vertex_buffer_handle) orelse break :pass;
                 // const ib_info = gctx.lookupResourceInfo(demo.index_buffer) orelse break :pass;
-                // const pipeline = gctx.lookupResource(demo.pipeline) orelse break :pass;
-                // const bind_group = gctx.lookupResource(demo.bind_group) orelse break :pass;
-                // const depth_view = gctx.lookupResource(demo.depth_texture_view) orelse break :pass;
+                const pipeline = gctx.lookupResource(demo.pipeline) orelse break :pass;
+                const bind_group = gctx.lookupResource(demo.bind_group) orelse break :pass;
+                const depth_view = gctx.lookupResource(demo.depth_texture_view) orelse break :pass;
 
+                const clear_value = wgpu.Color{
+                    .r = 0.0,
+                    .g = 0.0,
+                    .b = 0.4,
+                    .a = 1.0,
+                };
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
                     .view = back_buffer_view,
                     .load_op = .clear,
                     .store_op = .store,
+                    .clear_value = clear_value,
                 }};
-                // const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                //     .view = depth_view,
-                //     .depth_load_op = .clear,
-                //     .depth_store_op = .store,
-                //     .depth_clear_value = 1.0,
-                // };
+                const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                    .view = depth_view,
+                    .depth_load_op = .clear,
+                    .depth_store_op = .store,
+                    .depth_clear_value = 1.0,
+                };
 
                 const render_pass_info = wgpu.RenderPassDescriptor{
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
+                    .depth_stencil_attachment = &depth_attachment,
                 };
                 const pass = encoder.beginRenderPass(render_pass_info);
                 defer {
                     pass.end();
                     pass.release();
                 }
-                // pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                 // pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
-                // pass.setPipeline(pipeline);
+                pass.setPipeline(pipeline);
+                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+
+                pass.setBindGroup(0, bind_group, &.{0});
+
+                pass.draw(6, 2, 0, 0);
             }
             {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
@@ -122,16 +233,16 @@ const DemoState = struct {
         defer commands.release();
         gctx.submit(&.{commands});
 
-        // if (gctx.present() == .swap_chain_resized) {
-        //     // Release old depth texture.
-        //     gctx.releaseResource(demo.depth_texture_view);
-        //     gctx.destroyResource(demo.depth_texture);
-        //
-        //     // Create a new depth texture to match the new window size.
-        //     const depth = createDepthTexture(gctx);
-        //     demo.depth_texture = depth.texture;
-        //     demo.depth_texture_view = depth.view;
-        // }
+        if (gctx.present() == .swap_chain_resized) {
+            // Release old depth texture.
+            gctx.releaseResource(demo.depth_texture_view);
+            gctx.destroyResource(demo.depth_texture);
+
+            // Create a new depth texture to match the new window size.
+            const depth = createDepthTexture(gctx);
+            demo.depth_texture = depth.texture;
+            demo.depth_texture_view = depth.view;
+        }
     }
 };
 
@@ -169,7 +280,7 @@ pub fn main() !void {
         std.os.chdir(path) catch {};
     }
 
-    const window = zglfw.Window.create(1600, 1000, window_title, null) catch {
+    const window = zglfw.Window.create(1920, 1080, window_title, null) catch {
         std.log.err("Failed to create demo window.", .{});
         return;
     };

@@ -3,6 +3,7 @@ const zgui = @import("libs/zgui/build.zig");
 const zgpu = @import("libs/zgpu/build.zig");
 const zpool = @import("libs/zpool/build.zig");
 const zglfw = @import("libs/zglfw/build.zig");
+const zmath = @import("libs/zmath/build.zig");
 const content_dir = "content/";
 
 pub fn build(b: *std.Build) void {
@@ -26,6 +27,10 @@ pub fn build(b: *std.Build) void {
     const zgpu_pkg = zgpu.package(b, target, optimize, .{
         .deps = .{ .zpool = zpool_pkg.zpool, .zglfw = zglfw_pkg.zglfw },
     });
+    const zmath_pkg = zmath.package(b, target, optimize, .{
+        .options = .{ .enable_cross_platform_determinism = true },
+    });
+    zmath_pkg.link(exe);
     zglfw_pkg.link(exe);
     zgpu_pkg.link(exe);
 

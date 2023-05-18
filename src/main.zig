@@ -19,7 +19,7 @@ const Vertex = struct {
 
 const WORKGROUP_SIZE = 8; // must be same as in shader
 
-const GRID_CELLS_Y: u32 = 24;
+const GRID_CELLS_Y: u32 = 200;
 
 const DemoState = struct {
     const Self = @This();
@@ -361,7 +361,8 @@ const DemoState = struct {
             demo.depth_texture = depth.texture;
             demo.depth_texture_view = depth.view;
         }
-        std.time.sleep(1e+8); // 100 millis
+        // std.time.sleep(1e+8); // 100 millis
+        std.time.sleep(1e+6); // 100 millis
     }
 };
 

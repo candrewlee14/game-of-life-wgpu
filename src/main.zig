@@ -10,11 +10,14 @@ const content_dir = @import("build_options").content_dir;
 const window_title = "Conway's Game of Life (Native WebGPU)";
 
 const cell_wgsl = @embedFile("shaders/cell.wgsl");
+const compute_wgsl = @embedFile("shaders/compute.wgsl");
 
 const Vertex = struct {
     x: f32,
     y: f32,
 };
+
+const WORKGROUP_SIZE = 8; // must be same as in shader
 
 const GRID_CELLS_Y: u32 = 24;
 
@@ -24,6 +27,7 @@ const DemoState = struct {
     gctx: *zgpu.GraphicsContext,
 
     pipeline: zgpu.RenderPipelineHandle,
+    compute_pipeline: zgpu.ComputePipelineHandle,
     bind_groups: [2]zgpu.BindGroupHandle,
 
     vertex_buffer_handle: zgpu.BufferHandle,
@@ -42,6 +46,7 @@ const DemoState = struct {
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true, .compute = true }, .uniform, false, @sizeOf(u32) * 2),
             zgpu.bufferEntry(1, .{ .vertex = true, .fragment = true, .compute = true }, .read_only_storage, true, 0),
+            zgpu.bufferEntry(2, .{ .fragment = true, .compute = true }, .storage, false, 0),
         });
         defer gctx.releaseResource(bind_group_layout);
 
@@ -97,6 +102,21 @@ const DemoState = struct {
             // zig fmt: on
 
             break :pipline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
+        };
+
+        const compute_pipeline = compute_pipline: {
+            const compute_module = zgpu.createWgslShaderModule(gctx.device, compute_wgsl, "compute");
+            defer compute_module.release();
+
+            const compute_pipeline_descriptor = wgpu.ComputePipelineDescriptor{
+                .label = "Compute pipeline",
+                .compute = .{
+                    .module = compute_module,
+                    .entry_point = "computeMain",
+                },
+            };
+
+            break :compute_pipline gctx.createComputePipeline(pipeline_layout, compute_pipeline_descriptor);
         };
 
         const grid_cells_x = gctx.swapchain_descriptor.width * GRID_CELLS_Y / gctx.swapchain_descriptor.height;
@@ -162,7 +182,7 @@ const DemoState = struct {
 
         const depth = createDepthTexture(gctx);
 
-        // Create a bind group layout needed for our render pipeline.
+        // Create a bind group layout needed for our compute & render pipelines.
         // zig fmt: off
         const bind_groups = [_]zgpu.BindGroupHandle{
             gctx.createBindGroup(bind_group_layout, 
@@ -176,6 +196,11 @@ const DemoState = struct {
                     .buffer_handle = cell_storage_handles[0],
                     .size = @sizeOf(u32) * cell_state_arrays[0].items.len,
                 },
+                .{
+                    .binding = 2,
+                    .buffer_handle = cell_storage_handles[1],
+                    .size = @sizeOf(u32) * cell_state_arrays[1].items.len,
+                },
             }),
             gctx.createBindGroup(bind_group_layout, 
                 &[_]zgpu.BindGroupEntryInfo{ .{
@@ -188,6 +213,11 @@ const DemoState = struct {
                     .buffer_handle = cell_storage_handles[1],
                     .size = @sizeOf(u32) * cell_state_arrays[1].items.len,
                 },
+                .{
+                    .binding = 2,
+                    .buffer_handle = cell_storage_handles[0],
+                    .size = @sizeOf(u32) * cell_state_arrays[0].items.len,
+                },
             }),
         };
         // zig fmt: on
@@ -198,6 +228,7 @@ const DemoState = struct {
             .cell_storage_handles = cell_storage_handles,
             .cell_state_arrays = cell_state_arrays,
             .pipeline = pipeline,
+            .compute_pipeline = compute_pipeline,
             .bind_groups = bind_groups,
             .depth_texture = depth.texture,
             .depth_texture_view = depth.view,
@@ -227,10 +258,26 @@ const DemoState = struct {
 
         const back_buffer_view = gctx.swapchain.getCurrentTextureView();
         defer back_buffer_view.release();
+        const grid_cells_x = gctx.swapchain_descriptor.width * GRID_CELLS_Y / gctx.swapchain_descriptor.height;
 
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
+
+            compute_pass: {
+                const pipeline = gctx.lookupResource(demo.compute_pipeline) orelse break :compute_pass;
+                const bind_group = gctx.lookupResource(demo.bind_groups[t % 2]) orelse break :compute_pass;
+                const pass = encoder.beginComputePass(null);
+                defer {
+                    pass.end();
+                    pass.release();
+                }
+                pass.setPipeline(pipeline);
+                pass.setBindGroup(0, bind_group, &.{0});
+                const wg_count_x = @floatToInt(u32, std.math.ceil(@intToFloat(f32, grid_cells_x) / @intToFloat(f32, WORKGROUP_SIZE)));
+                const wg_count_y = @floatToInt(u32, std.math.ceil(@intToFloat(f32, GRID_CELLS_Y) / @intToFloat(f32, WORKGROUP_SIZE)));
+                pass.dispatchWorkgroups(wg_count_x, wg_count_y, 1);
+            }
 
             pass: {
                 const vb_info = gctx.lookupResourceInfo(demo.vertex_buffer_handle) orelse break :pass;
@@ -268,7 +315,6 @@ const DemoState = struct {
                     pass.end();
                     pass.release();
                 }
-                const grid_cells_x = gctx.swapchain_descriptor.width * GRID_CELLS_Y / gctx.swapchain_descriptor.height;
                 const uniform_array = [_]u32{ grid_cells_x, GRID_CELLS_Y };
                 const mem = gctx.uniformsAllocate(u32, 2);
                 @memcpy(mem.slice[0..2], uniform_array[0..]);

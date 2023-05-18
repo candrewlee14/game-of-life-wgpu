@@ -19,7 +19,7 @@ const Vertex = struct {
 
 const WORKGROUP_SIZE = 8; // must be same as in shader
 
-const GRID_CELLS_Y: u32 = 200;
+const GRID_CELLS_Y: u32 = 260;
 
 const DemoState = struct {
     const Self = @This();
@@ -166,17 +166,18 @@ const DemoState = struct {
         };
         // zig fmt: on
         {
+            var rand_impl = std.rand.DefaultPrng.init(1);
             var i: usize = 0;
             while (i < cell_state_arrays[0].items.len) : (i += 3) {
-                cell_state_arrays[0].items[i] = 1;
+                cell_state_arrays[0].items[i] = @boolToInt(@mod(rand_impl.random().int(i32), 2) == 0);
             }
             gctx.queue.writeBuffer(gctx.lookupResource(cell_storage_handles[0]).?, 0, u32, cell_state_arrays[0].items);
         }
         {
-            var i: usize = 0;
-            while (i < cell_state_arrays[1].items.len) : (i += 2) {
-                cell_state_arrays[1].items[i] = 1;
-            }
+            // var i: usize = 0;
+            // while (i < cell_state_arrays[1].items.len) : (i += 2) {
+            //     cell_state_arrays[1].items[i] = 1;
+            // }
             gctx.queue.writeBuffer(gctx.lookupResource(cell_storage_handles[1]).?, 0, u32, cell_state_arrays[1].items);
         }
 
@@ -362,7 +363,8 @@ const DemoState = struct {
             demo.depth_texture_view = depth.view;
         }
         // std.time.sleep(1e+8); // 100 millis
-        std.time.sleep(1e+6); // 100 millis
+        const milli = 1e6;
+        std.time.sleep(milli);
     }
 };
 

@@ -24,12 +24,12 @@ const DemoState = struct {
     gctx: *zgpu.GraphicsContext,
 
     pipeline: zgpu.RenderPipelineHandle,
-    bind_group: zgpu.BindGroupHandle,
+    bind_groups: [2]zgpu.BindGroupHandle,
 
     vertex_buffer_handle: zgpu.BufferHandle,
-    cell_storage_handle: zgpu.BufferHandle,
+    cell_storage_handles: [2]zgpu.BufferHandle,
 
-    cell_state_array: std.ArrayList(u32),
+    cell_state_arrays: [2]std.ArrayList(u32),
     // index_buffer: zgpu.BufferHandle,
 
     depth_texture: zgpu.TextureHandle,
@@ -125,53 +125,88 @@ const DemoState = struct {
         gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer_handle).?, 0, f32, vertices[0..]);
 
         const n = grid_cells_x * GRID_CELLS_Y;
-        var cell_state_array = try std.ArrayList(u32).initCapacity(allocator, n);
-        cell_state_array.appendNTimesAssumeCapacity(0, n);
-        const cell_storage_handle = gctx.createBuffer(.{
-            .label = "Cell State Storage",
-            .size = cell_state_array.items.len * @sizeOf(u32),
-            .usage = .{ .storage = true, .copy_dst = true },
-        });
+        var cell_state_arrays = [_]std.ArrayList(u32){
+            try std.ArrayList(u32).initCapacity(allocator, n),
+            try std.ArrayList(u32).initCapacity(allocator, n),
+        };
+        cell_state_arrays[0].appendNTimesAssumeCapacity(0, n);
+        cell_state_arrays[1].appendNTimesAssumeCapacity(0, n);
+        // zig fmt: off
+        const cell_storage_handles = [_]zgpu.BufferHandle{
+            gctx.createBuffer(.{
+                .label = "Cell State Storage A",
+                .size = cell_state_arrays[0].items.len * @sizeOf(u32),
+                .usage = .{ .storage = true, .copy_dst = true },
+            }),
+            gctx.createBuffer(.{
+                .label = "Cell State Storage B",
+                .size = cell_state_arrays[1].items.len * @sizeOf(u32),
+                .usage = .{ .storage = true, .copy_dst = true },
+            }),
+        };
+        // zig fmt: on
         {
             var i: usize = 0;
-            while (i < cell_state_array.items.len) : (i += 3) {
-                cell_state_array.items[i] = 1;
+            while (i < cell_state_arrays[0].items.len) : (i += 3) {
+                cell_state_arrays[0].items[i] = 1;
             }
+            gctx.queue.writeBuffer(gctx.lookupResource(cell_storage_handles[0]).?, 0, u32, cell_state_arrays[0].items);
         }
-        gctx.queue.writeBuffer(gctx.lookupResource(cell_storage_handle).?, 0, u32, cell_state_array.items);
+        {
+            var i: usize = 0;
+            while (i < cell_state_arrays[1].items.len) : (i += 2) {
+                cell_state_arrays[1].items[i] = 1;
+            }
+            gctx.queue.writeBuffer(gctx.lookupResource(cell_storage_handles[1]).?, 0, u32, cell_state_arrays[1].items);
+        }
 
         const depth = createDepthTexture(gctx);
 
         // Create a bind group layout needed for our render pipeline.
         // zig fmt: off
-        const bind_group = gctx.createBindGroup(bind_group_layout, 
-            &[_]zgpu.BindGroupEntryInfo{ .{
-                .binding = 0,
-                .buffer_handle = gctx.uniforms.buffer,
-                .size = @sizeOf(u32) * 2,
-            }, 
-            .{
-                .binding = 1,
-                .buffer_handle = cell_storage_handle,
-                .size = @sizeOf(u32) * cell_state_array.items.len,
-            },
-        });
+        const bind_groups = [_]zgpu.BindGroupHandle{
+            gctx.createBindGroup(bind_group_layout, 
+                &[_]zgpu.BindGroupEntryInfo{ .{
+                    .binding = 0,
+                    .buffer_handle = gctx.uniforms.buffer,
+                    .size = @sizeOf(u32) * 2,
+                }, 
+                .{
+                    .binding = 1,
+                    .buffer_handle = cell_storage_handles[0],
+                    .size = @sizeOf(u32) * cell_state_arrays[0].items.len,
+                },
+            }),
+            gctx.createBindGroup(bind_group_layout, 
+                &[_]zgpu.BindGroupEntryInfo{ .{
+                    .binding = 0,
+                    .buffer_handle = gctx.uniforms.buffer,
+                    .size = @sizeOf(u32) * 2,
+                }, 
+                .{
+                    .binding = 1,
+                    .buffer_handle = cell_storage_handles[1],
+                    .size = @sizeOf(u32) * cell_state_arrays[1].items.len,
+                },
+            }),
+        };
         // zig fmt: on
 
         return Self{
             .gctx = gctx,
             .vertex_buffer_handle = vertex_buffer_handle,
-            .cell_storage_handle = cell_storage_handle,
-            .cell_state_array = cell_state_array,
+            .cell_storage_handles = cell_storage_handles,
+            .cell_state_arrays = cell_state_arrays,
             .pipeline = pipeline,
-            .bind_group = bind_group,
+            .bind_groups = bind_groups,
             .depth_texture = depth.texture,
             .depth_texture_view = depth.view,
         };
     }
 
     fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-        self.cell_state_array.deinit();
+        self.cell_state_arrays[0].deinit();
+        self.cell_state_arrays[1].deinit();
         self.gctx.destroy(allocator);
         self.* = undefined;
     }
@@ -184,6 +219,7 @@ const DemoState = struct {
     }
     fn draw(demo: *Self) void {
         const gctx = demo.gctx;
+        const t = gctx.stats.cpu_frame_number;
         const fb_width = gctx.swapchain_descriptor.width;
         _ = fb_width;
         const fb_height = gctx.swapchain_descriptor.height;
@@ -200,7 +236,7 @@ const DemoState = struct {
                 const vb_info = gctx.lookupResourceInfo(demo.vertex_buffer_handle) orelse break :pass;
                 // const ib_info = gctx.lookupResourceInfo(demo.index_buffer) orelse break :pass;
                 const pipeline = gctx.lookupResource(demo.pipeline) orelse break :pass;
-                const bind_group = gctx.lookupResource(demo.bind_group) orelse break :pass;
+                const bind_group = gctx.lookupResource(demo.bind_groups[t % 2]) orelse break :pass;
                 const depth_view = gctx.lookupResource(demo.depth_texture_view) orelse break :pass;
 
                 const clear_value = wgpu.Color{
@@ -279,6 +315,7 @@ const DemoState = struct {
             demo.depth_texture = depth.texture;
             demo.depth_texture_view = depth.view;
         }
+        std.time.sleep(1e+8); // 100 millis
     }
 };
 

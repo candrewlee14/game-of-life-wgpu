@@ -4,7 +4,9 @@
 @group(0) @binding(2) var<storage, read_write> cell_state_out: array<u32>;
 
 fn cellIndex(cell: vec2<u32>) -> u32 {
-  return cell.y * grid.x + cell.x;
+  let cell_x = cell.x % grid.x;
+  let cell_y = cell.y % grid.y;
+  return (cell_y * grid.x + cell_x);
 }
 
 fn cellActive(x: u32, y: u32) -> u32 {

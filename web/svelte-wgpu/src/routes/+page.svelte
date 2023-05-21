@@ -34,7 +34,7 @@
         if (!context) {
             throw new Error("No context found");
         }
-        const canvasFormat = navigator.gpu.getPreferredCanvasFormat(adapter);
+        const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
         context.configure({
             device,
             format: canvasFormat,
@@ -74,7 +74,7 @@
         });
         device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 
-        const vertexBufferLayout = {
+        const vertexBufferLayout : GPUVertexBufferLayout= {
             arrayStride: 2 * 4,
             attributes: [
                 {

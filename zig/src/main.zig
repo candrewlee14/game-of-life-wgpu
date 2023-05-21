@@ -267,7 +267,7 @@ const DemoState = struct {
 
             compute_pass: {
                 const pipeline = gctx.lookupResource(demo.compute_pipeline) orelse break :compute_pass;
-                const bind_group = gctx.lookupResource(demo.bind_groups[1]) orelse break :compute_pass;
+                const bind_group = gctx.lookupResource(demo.bind_groups[t % 2]) orelse break :compute_pass;
                 const pass = encoder.beginComputePass(null);
                 defer {
                     pass.end();
@@ -275,10 +275,8 @@ const DemoState = struct {
                 }
                 pass.setPipeline(pipeline);
                 pass.setBindGroup(0, bind_group, &.{0});
-                // const wg_count_x = @floatToInt(u32, std.math.ceil(@intToFloat(f32, grid_cells_x) / @intToFloat(f32, WORKGROUP_SIZE)));
-                // const wg_count_y = @floatToInt(u32, std.math.ceil(@intToFloat(f32, GRID_CELLS_Y) / @intToFloat(f32, WORKGROUP_SIZE)));
-                // const wg_count_x = 10;
-                // const wg_count_y = 10;
+                const wg_count_x = @floatToInt(u32, std.math.ceil(@intToFloat(f32, grid_cells_x) / @intToFloat(f32, WORKGROUP_SIZE)));
+                const wg_count_y = @floatToInt(u32, std.math.ceil(@intToFloat(f32, GRID_CELLS_Y) / @intToFloat(f32, WORKGROUP_SIZE)));
                 pass.dispatchWorkgroups(wg_count_x, wg_count_y, 1);
             }
 

@@ -40,7 +40,7 @@ const DemoState = struct {
     depth_texture_view: zgpu.TextureViewHandle,
 
     fn init(allocator: std.mem.Allocator, window: *zglfw.Window) !DemoState {
-        const gctx = try zgpu.GraphicsContext.create(allocator, window);
+        const gctx = try zgpu.GraphicsContext.create(allocator, window, .{});
 
         // Create a bind group layout needed for our render pipeline.
         const bind_group_layout = gctx.createBindGroupLayout(&.{
@@ -169,7 +169,7 @@ const DemoState = struct {
             var rand_impl = std.rand.DefaultPrng.init(1);
             var i: usize = 0;
             while (i < cell_state_arrays[0].items.len) : (i += 3) {
-                cell_state_arrays[0].items[i] = @boolToInt(@mod(rand_impl.random().int(i32), 2) == 0);
+                cell_state_arrays[0].items[i] = @intFromBool(@mod(rand_impl.random().int(i32), 2) == 0);
             }
             gctx.queue.writeBuffer(gctx.lookupResource(cell_storage_handles[0]).?, 0, u32, cell_state_arrays[0].items);
         }
@@ -275,8 +275,9 @@ const DemoState = struct {
                 }
                 pass.setPipeline(pipeline);
                 pass.setBindGroup(0, bind_group, &.{0});
-                const wg_count_x = @floatToInt(u32, std.math.ceil(@intToFloat(f32, grid_cells_x) / @intToFloat(f32, WORKGROUP_SIZE)));
-                const wg_count_y = @floatToInt(u32, std.math.ceil(@intToFloat(f32, GRID_CELLS_Y) / @intToFloat(f32, WORKGROUP_SIZE)));
+
+                const wg_count_x : u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(grid_cells_x)) / @as(f32, @floatFromInt(WORKGROUP_SIZE))));
+                const wg_count_y : u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(GRID_CELLS_Y)) / @as(f32, @floatFromInt(WORKGROUP_SIZE))));
                 pass.dispatchWorkgroups(wg_count_x, wg_count_y, 1);
             }
 
@@ -421,7 +422,7 @@ pub fn main() !void {
 
     const scale_factor = scale_factor: {
         const scale = window.getContentScale();
-        break :scale_factor math.max(scale[0], scale[1]);
+        break :scale_factor @max(scale[0], scale[1]);
     };
 
     zgui.init(allocator);
@@ -432,7 +433,7 @@ pub fn main() !void {
     zgui.backend.init(
         window,
         demo.gctx.device,
-        @enumToInt(zgpu.GraphicsContext.swapchain_format),
+        @intFromEnum(zgpu.GraphicsContext.swapchain_format),
     );
     defer zgui.backend.deinit();
 
